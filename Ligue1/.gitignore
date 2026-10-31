@@ -1,0 +1,14 @@
+# Produits de ./build.sh (bundle, tranches par architecture, iconset temporaire)
+build/
+
+# macOS
+.DS_Store
+
+# Exports CSV : données non chiffrées (cotes, paris, bankroll), à ne jamais versionner
+*.csv
+
+# Xcode user settings
+xcuserdata/
+
+# Compiled apps
+*.app
