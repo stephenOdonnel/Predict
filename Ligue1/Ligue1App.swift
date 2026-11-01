@@ -1,6 +1,6 @@
 //
 //  Ligue1App.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 import SwiftUI
@@ -14,7 +14,7 @@ struct Ligue1App: App {
     // Pas de mot de passe : l'application s'ouvre directement.
 
     var body: some Scene {
-        WindowGroup("Ligue 1") {
+        WindowGroup("Predict") {
             MenuView()
                 .frame(minWidth: 1080, minHeight: 700)
                 .environmentObject(vm)

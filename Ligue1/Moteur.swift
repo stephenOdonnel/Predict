@@ -1,6 +1,6 @@
 //
 //  Moteur.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Moteur (model.py de l'app Python) : modèle Dixon-Coles par estimation

@@ -1,6 +1,6 @@
 //
 //  ViewModel.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  SÉCURITÉ (mêmes règles que Finance et MedCompta) :
@@ -22,6 +22,8 @@
 //  des saisons passées manquantes (GET sans cookie, rien n'est envoyé) ; avec
 //  une clé The Odds API, il télécharge aussi les cotes Winamax, Unibet et
 //  Betclic des matchs à venir (seule la clé est envoyée).
+//  Il télécharge aussi les xG des matchs joués sur Understat (une requête GET,
+//  sans clé), sans jamais écraser un xG déjà présent.
 //
 
 import SwiftUI
@@ -119,6 +121,32 @@ final class Ligue1ViewModel: ObservableObject {
     @Published private(set) var telechargementEnCours = false
     /// Téléchargement des cotes Winamax, Unibet et Betclic (The Odds API).
     @Published private(set) var cotesEnCours = false
+    @Published private(set) var xgEnCours = false
+    /// Compte rendu du dernier import sur le calendrier (officiel appliqué ou non, et pourquoi).
+    @Published private(set) var noteCalendrier: String?
+
+    // Championnats : un dossier de données par championnat (voir `dossierLocal`).
+    @Published private(set) var championnat: Championnat = Championnat.actif
+    /// Dernier état connu de chaque championnat, pour la vue d'ensemble.
+    @Published private(set) var resumes: [String: ResumeChampionnat] = ResumeChampionnat.lireTous()
+    /// Mise à jour de tous les championnats en cours.
+    @Published private(set) var majGlobaleEnCours = false
+    @Published private(set) var majGlobaleTexte: String?
+    /// Compte rendu de la dernière mise à jour globale, un élément par championnat.
+    @Published private(set) var rapportsMajGlobale: [String] = []
+    static let cleChampionnat = "championnatActif"
+    /// Autres championnats lus sur le disque pour la simulation commune des paris.
+    @Published private(set) var autresChampionnats: [EntreeParis] = []
+    @Published private(set) var autresEnCours = false
+    /// Championnats dont les fichiers n'ont pas pu être lus (sceau absent ou invalide).
+    @Published private(set) var autresIllisibles: [Championnat] = []
+    /// Bankroll de départ unique de la simulation commune.
+    @Published var bankrollDepartGlobal: Double = {
+        let v = UserDefaults.standard.double(forKey: "bankrollDepartGlobal")
+        return v >= 100 && v <= 10_000 ? v : Paris.bankrollDepartDefaut
+    }() {
+        didSet { UserDefaults.standard.set(bankrollDepartGlobal, forKey: "bankrollDepartGlobal") }
+    }
     /// L'écran d'accueil lance la mise à jour en ligne une fois par session.
     var miseAJourAutomatiqueFaite = false
 
@@ -137,7 +165,7 @@ final class Ligue1ViewModel: ObservableObject {
     private let maxLogs = 50
 
     /// Sous-dossier créé dans ~/Documents.
-    private let sousDossier = "Ligue1"
+    private let sousDossier = "Predict"
     private let dossierLogos = "logos"
 
     // MARK: - Garde-fous de stockage
@@ -185,6 +213,11 @@ final class Ligue1ViewModel: ObservableObject {
     }
 
     init() {
+        if let brut = UserDefaults.standard.string(forKey: Self.cleChampionnat), let c = Championnat(rawValue: brut) {
+            championnat = c
+            Championnat.actif = c
+        }
+        migrerAncienDossier()
         derniereSauvegardeLocale = Sauvegarde.lire(cleDerniereLocale)
         // Ne jamais perdre la dernière frappe dans un champ de cote.
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
@@ -241,8 +274,31 @@ final class Ligue1ViewModel: ObservableObject {
 
     /// Dossier des données sur le disque local.
     var dossierLocal: URL? {
+        racineLocale?.appendingPathComponent(championnat.dossier, isDirectory: true)
+    }
+
+    /// ~/Documents/Predict : logos communs, un sous-dossier par championnat.
+    var racineLocale: URL? {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
             .appendingPathComponent(sousDossier, isDirectory: true)
+    }
+
+    /// La première version de Predict (Ligue 1 seule) rangeait ses fichiers à la racine :
+    /// ils passent dans le sous-dossier de la Ligue 1, sceaux compris.
+    private func migrerAncienDossier() {
+        guard let racine = racineLocale else { return }
+        let fm = FileManager.default
+        let cible = racine.appendingPathComponent(Championnat.ligue1.dossier, isDirectory: true)
+        let anciens = FichierDonnees.allCases.map(\.nom).filter { fm.fileExists(atPath: racine.appendingPathComponent($0).path) }
+        guard !anciens.isEmpty, !fm.fileExists(atPath: cible.appendingPathComponent(FichierDonnees.ligue.nom).path) else { return }
+        try? fm.createDirectory(at: cible, withIntermediateDirectories: true)
+        for nom in anciens {
+            for suffixe in ["", ".hmac"] {
+                let source = racine.appendingPathComponent(nom + suffixe)
+                guard fm.fileExists(atPath: source.path) else { continue }
+                try? fm.moveItem(at: source, to: cible.appendingPathComponent(nom + suffixe))
+            }
+        }
     }
 
     // MARK: - Lecture / écriture
@@ -322,6 +378,72 @@ final class Ligue1ViewModel: ObservableObject {
         return resultatLocal
     }
 
+    /// Données enregistrées avec une ancienne graphie football-data (« Espanol », « Le Mans ») :
+    /// les noms passent à ceux de la table du championnat (« Espanyol », « Le Mans FC »),
+    /// dans la saison, l'historique et les paris forcés ou exclus, puis sont réenregistrés.
+    private func renommerClubs() {
+        let table = Championnat.actif.clubs
+        func nouveau(_ n: String) -> String {
+            if let v = table[n], v != n { return v }
+            return n
+        }
+        var l = ligue
+        var changeL = false
+        for i in l.teams.indices where nouveau(l.teams[i].name) != l.teams[i].name {
+            l.teams[i].name = nouveau(l.teams[i].name)
+            changeL = true
+        }
+        for i in l.matches.indices {
+            let d = nouveau(l.matches[i].domicile), e = nouveau(l.matches[i].exterieur)
+            if d != l.matches[i].domicile || e != l.matches[i].exterieur {
+                l.matches[i].domicile = d
+                l.matches[i].exterieur = e
+                changeL = true
+            }
+        }
+        if changeL, fichiersCharges.contains(.ligue), l.valider() == nil {
+            ligue = l
+            sauvegarder(Ligue.self)
+            log("Noms de clubs mis à jour dans la saison", level: .info)
+        }
+
+        var h = historique
+        var changeH = false
+        for i in h.matches.indices {
+            let d = nouveau(h.matches[i].home), e = nouveau(h.matches[i].away)
+            if d != h.matches[i].home || e != h.matches[i].away {
+                h.matches[i].home = d
+                h.matches[i].away = e
+                changeH = true
+            }
+        }
+        if changeH, fichiersCharges.contains(.historique), h.valider() == nil {
+            historique = h
+            sauvegarder(Historique.self)
+        }
+
+        let manuels = parisManuels.map { p -> PariManuel in
+            var q = p
+            q.home = nouveau(p.home)
+            q.away = nouveau(p.away)
+            return q
+        }
+        if manuels != parisManuels, fichiersCharges.contains(.parisManuels) {
+            parisManuels = manuels
+            sauvegarder([PariManuel].self)
+        }
+        let exclus = parisExclus.map { p -> PariExclu in
+            var q = p
+            q.home = nouveau(p.home)
+            q.away = nouveau(p.away)
+            return q
+        }
+        if exclus != parisExclus, fichiersCharges.contains(.parisExclus) {
+            parisExclus = exclus
+            sauvegarder([PariExclu].self)
+        }
+    }
+
     // MARK: - Sauvegarde / chargement
 
     func chargerDonnees() {
@@ -334,6 +456,7 @@ final class Ligue1ViewModel: ObservableObject {
         charger([PariManuel].self)
         charger([PariExclu].self)
         charger(Historique.self)
+        renommerClubs()
         chargerLogos()
         surveillerFichiers()
 
@@ -379,6 +502,7 @@ final class Ligue1ViewModel: ObservableObject {
                 return false
             }
             log("\(f.titre) : sauvegardé", level: .success)
+            enregistrerResume()
             return true
         } catch {
             log("Erreur sauvegarde \(f.nom) : \(error.localizedDescription)", level: .error)
@@ -424,7 +548,7 @@ final class Ligue1ViewModel: ObservableObject {
         !FichierDonnees.allCases.map { sauvegarder($0) }.contains(false)
     }
 
-    /// Réécrit et rescelle tous les fichiers dans ~/Documents/Ligue1.
+    /// Réécrit et rescelle tous les fichiers dans ~/Documents/Predict.
     @discardableResult
     func sauvegarderLocalement() -> Bool {
         // Ne jamais remplacer une bonne sauvegarde locale par des données vides non chargées
@@ -658,6 +782,7 @@ final class Ligue1ViewModel: ObservableObject {
         }
         modele = Modele.construire(ligue: ligue, historique: historiquePrepare,
                                    debutSaison: reglages.jourDebutSaison, parametres: reglages.parametresEnService)
+        enregistrerResume()
         lancerSimulation()
     }
 
@@ -822,7 +947,7 @@ final class Ligue1ViewModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.title = "Importer des CSV football-data.co.uk"
         panel.prompt = "Importer"
-        panel.message = "Sélectionnez les F1.csv téléchargés (saison en cours et saisons passées) et, si vous l'avez, fixtures.csv."
+        panel.message = "Sélectionnez les CSV du championnat affiché téléchargés (saison en cours et saisons passées) et, si vous l'avez, fixtures.csv."
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
@@ -903,11 +1028,11 @@ final class Ligue1ViewModel: ObservableObject {
         var cibles = [(nom: "fixtures.csv (en ligne)", url: FootballData.fixtures, obligatoire: false)]
         for s in saisonsAMettreAJour {
             guard let url = FootballData.urlSaison(s) else { continue }
-            cibles.append(("F1.csv \(s) (en ligne)", url, s == ligue.season))
+            cibles.append(("\(Championnat.actif.codeCSV).csv \(s) (en ligne)", url, s == ligue.season))
         }
         for s in saisonsPasseesManquantes {
             guard let url = FootballData.urlSaison(s) else { continue }
-            cibles.append(("F1.csv \(s) (en ligne)", url, true))
+            cibles.append(("\(Championnat.actif.codeCSV).csv \(s) (en ligne)", url, true))
         }
 
         let session = URLSession(configuration: .ephemeral)
@@ -948,10 +1073,10 @@ final class Ligue1ViewModel: ObservableObject {
 
     // MARK: - Cotes en ligne (The Odds API)
 
-    private let serviceCleCotes = "com.ligue1.app.oddsapi"
+    private let serviceCleCotes = "com.predict.app.oddsapi"
 
     /// Clé The Odds API, gardée avec la clé des sceaux (Application
-    /// Support › Ligue1, lisible par l'utilisateur seul).
+    /// Support › Predict, lisible par l'utilisateur seul).
     var cleCotesEnLigne: String {
         StockageAuth.read(service: serviceCleCotes, account: nil).data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
     }
@@ -1039,6 +1164,100 @@ final class Ligue1ViewModel: ObservableObject {
         return (texte, lu.inconnus.isEmpty)
     }
 
+    // MARK: - xG en ligne (Understat)
+
+    /// Scores et xG des matchs joués, téléchargés sur Understat. Un match absent des
+    /// données reçoit le score d'Understat (probabilités pré-match figées) ; un xG déjà
+    /// présent n'est jamais écrasé ; un xG n'est écrit que si le score enregistré est le
+    /// même que celui d'Understat (un forfait, ou un score corrigé, n'a pas de xG fiable). `termine` reçoit
+    /// le compte rendu sur le fil principal.
+    func telechargerXg(termine: @escaping (_ texte: String, _ ok: Bool) -> Void) {
+        guard !xgEnCours else { return }
+        if let b = blocageIntegrite {
+            termine("\(b.fichier) a été modifié en dehors de l'application : réglez d'abord la revue d'intégrité.", false)
+            return
+        }
+        guard saisonDisponible, let saison = ligue.season, let requete = XgEnLigne.requete(saison: saison) else {
+            termine("xG en ligne : aucune saison en cours.", false)
+            return
+        }
+        xgEnCours = true
+        let session = URLSession(configuration: .ephemeral)
+        let maximum = tailleMaxFichier
+        session.dataTask(with: requete) { donnees, reponse, erreur in
+            let statut = (reponse as? HTTPURLResponse)?.statusCode ?? 0
+            DispatchQueue.main.async {
+                session.finishTasksAndInvalidate()
+                self.xgEnCours = false
+                let r = self.appliquerXg(donnees.flatMap { $0.count <= maximum ? $0 : nil }, statut: statut, erreur: erreur)
+                self.log(r.texte, level: r.ok ? .info : .error)
+                termine(r.texte, r.ok)
+            }
+        }.resume()
+    }
+
+    private func appliquerXg(_ donnees: Data?, statut: Int, erreur: Error?) -> (texte: String, ok: Bool) {
+        if let erreur { return ("xG en ligne : \(erreur.localizedDescription)", false) }
+        guard statut == 200 else { return ("xG en ligne : réponse HTTP \(statut) d'Understat.", false) }
+        guard let donnees, let lu = try? XgEnLigne.lire(donnees, equipes: ligue.equipes) else {
+            return ("xG en ligne : réponse d'Understat vide, illisible ou anormalement volumineuse "
+                    + "(le site a peut-être changé de format).", false)
+        }
+        var ajoutes = 0, ecarts = 0, scores = 0
+        // Probabilités pré-match des matchs que le CSV n'a pas encore : calculées AVANT d'enregistrer
+        // le score, comme pour un score saisi à la main, puis figées.
+        var avant: [String: Probas] = [:]
+        for r in lu.rencontres {
+            if let m = ligue.matches.first(where: { $0.domicile == r.domicile && $0.exterieur == r.exterieur }),
+               !m.joue, let p = modele?.probas(r.domicile, r.exterieur) {
+                avant["\(r.domicile)|\(r.exterieur)"] = p
+            }
+        }
+        if !lu.rencontres.isEmpty, let e = modifier(Ligue.self, { l in
+            for r in lu.rencontres {
+                guard let i = l.matches.firstIndex(where: {
+                    $0.domicile == r.domicile && $0.exterieur == r.exterieur
+                }) else { continue }
+                // Match pas encore joué dans les données : score Understat (football-data le remplacera
+                // quand il publiera le sien).
+                if !l.matches[i].joue {
+                    l.matches[i].butsDomicile = r.butsDomicile
+                    l.matches[i].butsExterieur = r.butsExterieur
+                    if !l.matches[i].fige, let p = avant["\(r.domicile)|\(r.exterieur)"] {
+                        l.matches[i].figeP1 = p.p1
+                        l.matches[i].figePN = p.pN
+                        l.matches[i].figeP2 = p.p2
+                        l.matches[i].figeLambdaDomicile = p.lambdaDomicile
+                        l.matches[i].figeLambdaExterieur = p.lambdaExterieur
+                    }
+                    scores += 1
+                }
+                guard l.matches[i].xgDomicile == nil || l.matches[i].xgExterieur == nil else { continue }
+                guard l.matches[i].butsDomicile == r.butsDomicile, l.matches[i].butsExterieur == r.butsExterieur else {
+                    ecarts += 1
+                    continue
+                }
+                l.matches[i].xgDomicile = r.xgDomicile
+                l.matches[i].xgExterieur = r.xgExterieur
+                ajoutes += 1
+            }
+        }) {
+            return ("xG en ligne : \(e)", false)
+        }
+        // Scores et xG nourrissent le modèle et le classement : réajusté une seule fois pour tous les matchs.
+        if ajoutes > 0 || scores > 0 { changementMajeur() }
+        var parties: [String] = []
+        if scores > 0 { parties.append("\(scores) score\(scores > 1 ? "s" : "") ajouté\(scores > 1 ? "s" : "")") }
+        if ajoutes > 0 { parties.append("\(ajoutes) xG ajouté\(ajoutes > 1 ? "s" : "")") }
+        var texte = parties.isEmpty ? "Understat : rien de nouveau à ajouter."
+            : "Understat : " + parties.joined(separator: ", ") + "."
+        if scores > 0 { texte += " Les scores d'Understat sont remplacés par ceux de football-data dès qu'il les publie." }
+        if ecarts > 0 { texte += " \(ecarts) match(s) ignoré(s) : score différent de celui d'Understat." }
+        if lu.invalides > 0 { texte += " \(lu.invalides) match(s) sans xG exploitable." }
+        if !lu.inconnus.isEmpty { texte += " Club(s) non reconnu(s) : \(lu.inconnus.joined(separator: ", "))." }
+        return (texte, lu.inconnus.isEmpty && ecarts == 0)
+    }
+
     /// Historique complété, saison en cours créée ou mise à jour, paramètres
     /// recalibrés si l'historique a changé, probabilités pré-match figées pour les
     /// matchs devenus joués (modèle ajusté sur les journées précédentes) ; tout
@@ -1082,6 +1301,21 @@ final class Ligue1ViewModel: ObservableObject {
             } catch {
                 termine(error.localizedDescription)
                 return
+            }
+            if let officiel = CalendrierOfficiel.journees(saison: s, equipes: ligue.equipes) {
+                let couverts = Set(officiel.keys.flatMap { $0.split(separator: "|").map(String.init) })
+                let inconnus = Set(ligue.equipes).subtracting(couverts).sorted()
+                let absents = ligue.matches.filter { officiel["\($0.domicile)|\($0.exterieur)"] == nil }
+                if !inconnus.isEmpty {
+                    noteCalendrier = "Calendrier officiel \(s) NON appliqué : club(s) non reconnu(s) : \(inconnus.joined(separator: ", "))."
+                } else if !absents.isEmpty {
+                    noteCalendrier = "Calendrier officiel \(s) NON appliqué : \(absents.count) match(s) absent(s) du calendrier, par exemple "
+                        + absents.prefix(3).map { "\($0.domicile) – \($0.exterieur)" }.joined(separator: ", ") + "."
+                } else {
+                    noteCalendrier = "Calendrier officiel \(s) appliqué."
+                }
+            } else {
+                noteCalendrier = "Pas de calendrier officiel intégré pour \(s) : journées déduites des dates."
             }
             if let premier = ligue.matches.compactMap(\.date).min() { reglages.debutSaison = premier }
             if i.remplaceSaison, ancienne == nil {
@@ -1175,12 +1409,228 @@ final class Ligue1ViewModel: ObservableObject {
         return ok ? nil : "Import effectué en mémoire, mais la sauvegarde a échoué : voir le message d'erreur."
     }
 
+    // MARK: - Championnats
+
+    /// Un calcul ou un téléchargement est en cours : on ne change pas de championnat à ce moment-là
+    /// (son résultat arriverait dans les données d'un autre championnat).
+    var occupe: Bool {
+        importEnCours || telechargementEnCours || cotesEnCours || xgEnCours || calibrationEnCours
+            || simulationEnCours || backtestEnCours || precisionEnCours
+    }
+
+    /// Affiche un autre championnat : ses fichiers sont chargés depuis son propre dossier.
+    func changerChampionnat(_ c: Championnat) {
+        guard c != championnat, !occupe else { return }
+        enregistrerDifferees()
+        enregistrerResume()
+        UserDefaults.standard.set(c.rawValue, forKey: Self.cleChampionnat)
+        championnat = c
+        Championnat.actif = c
+        viderEtat()
+        chargerDonnees()
+        // Un championnat encore vide télécharge ses données au premier affichage.
+        miseAJourAutomatiqueFaite = saisonDisponible
+    }
+
+    /// Tout ce qui appartient au championnat quitté : sans cela, un fichier absent
+    /// du nouveau dossier laisserait les données de l'ancien en mémoire.
+    private func viderEtat() {
+        fichiersCharges.removeAll()
+        blocageIntegrite = nil
+        alerteIntegrite = nil
+        ligue = Ligue()
+        reglages = Reglages()
+        mouvements = []
+        parisManuels = []
+        parisExclus = []
+        historique = Historique()
+        modele = nil
+        simulation = nil
+        erreurSimulation = nil
+        backtest = nil
+        backtestCalcule = false
+        calibration = nil
+        calibrationCalculee = false
+        precision = nil
+        previsionsEnCache = nil
+        noteCalendrier = nil
+        logos = [:]
+        debugLogs = []
+    }
+
+    /// Lit un fichier d'un autre championnat, sceau vérifié ; nil s'il manque ou a été modifié.
+    private func lireAutre<T: Decodable>(_ type: T.Type, dossier: URL, nom: String) -> T? {
+        let url = dossier.appendingPathComponent(nom)
+        guard let brut = try? Data(contentsOf: url), brut.count <= tailleMaxFichier,
+              let sceau = try? Data(contentsOf: url.appendingPathExtension("hmac")),
+              IntegriteStockage.verifier(brut, nom: nom, sceau: sceau) else { return nil }
+        return try? decodeur.decode(T.self, from: brut)
+    }
+
+    /// Entrée du championnat affiché, d'après la mémoire (toujours à jour).
+    private var entreeCourante: EntreeParis {
+        EntreeParis(championnat: championnat, ligue: ligue, reglages: reglages, mouvements: mouvements,
+                    manuels: parisManuels, exclus: parisExclus, modele: modele)
+    }
+
+    /// Les cinq championnats pour la simulation commune : celui qui est affiché vient de la mémoire,
+    /// les autres de leur dernière lecture (`chargerAutresChampionnats`).
+    var entreesTous: [EntreeParis] {
+        Championnat.allCases.compactMap { c in
+            c == championnat ? entreeCourante : autresChampionnats.first { $0.championnat == c }
+        }
+    }
+
+    var resultatParisTous: (resultat: ResultatParis, libelles: [Int: String]) {
+        Paris.historiqueTous(entrees: entreesTous, bankrollDepart: bankrollDepartGlobal)
+    }
+
+    /// Lit les quatre autres championnats sur le disque (saison, réglages, paris) puis ajuste leur
+    /// modèle en arrière-plan, pour les paris en attente. Les paris réglés n'ont pas besoin du modèle.
+    func chargerAutresChampionnats() {
+        guard !autresEnCours else { return }
+        enregistrerDifferees()
+        autresEnCours = true
+        var lues: [EntreeParis] = []
+        var historiques: [Championnat: Historique] = [:]
+        var illisibles: [Championnat] = []
+        for c in Championnat.allCases where c != championnat {
+            guard let dossier = racineLocale?.appendingPathComponent(c.dossier, isDirectory: true),
+                  FileManager.default.fileExists(atPath: dossier.appendingPathComponent(FichierDonnees.ligue.nom).path)
+            else { continue }
+            guard let l = lireAutre(Ligue.self, dossier: dossier, nom: FichierDonnees.ligue.nom),
+                  let r = lireAutre(Reglages.self, dossier: dossier, nom: FichierDonnees.reglages.nom) else {
+                illisibles.append(c)
+                continue
+            }
+            let mouv = lireAutre([Mouvement].self, dossier: dossier, nom: FichierDonnees.mouvements.nom) ?? []
+            let man = lireAutre([PariManuel].self, dossier: dossier, nom: FichierDonnees.parisManuels.nom) ?? []
+            let exc = lireAutre([PariExclu].self, dossier: dossier, nom: FichierDonnees.parisExclus.nom) ?? []
+            lues.append(EntreeParis(championnat: c, ligue: l, reglages: r, mouvements: mouv, manuels: man,
+                                    exclus: exc, modele: nil))
+            if let h = lireAutre(Historique.self, dossier: dossier, nom: FichierDonnees.historique.nom) {
+                historiques[c] = h
+            }
+        }
+        autresIllisibles = illisibles
+        autresChampionnats = lues
+        chargerLogos()
+        let aModeliser = lues
+        let historiquesLus = historiques
+        DispatchQueue.global(qos: .userInitiated).async {
+            var finales = aModeliser
+            for i in finales.indices {
+                let e = finales[i]
+                guard !e.ligue.teams.isEmpty, e.ligue.season != nil, let h = historiquesLus[e.championnat] else { continue }
+                finales[i].modele = Modele.construire(ligue: e.ligue, historique: MatchHistoriquePrepare.preparer(h),
+                                                      debutSaison: e.reglages.jourDebutSaison,
+                                                      parametres: e.reglages.parametresEnService)
+            }
+            DispatchQueue.main.async {
+                self.autresChampionnats = finales
+                self.autresEnCours = false
+            }
+        }
+    }
+
+    /// Retient l'état du championnat affiché pour la vue d'ensemble.
+    func enregistrerResume() {
+        guard saisonDisponible, let saison = ligue.season else { return }
+        let r = resultatParis
+        resumes[championnat.rawValue] = ResumeChampionnat(
+            saison: saison,
+            matchsJoues: ligue.matches.filter(\.joue).count,
+            matchsTotal: ligue.matches.count,
+            bankrollDepart: reglages.bankrollDepart,
+            fixe: r.bankrolls.fixe, kelly: r.bankrolls.kelly,
+            demiKelly: r.bankrolls.demiKelly, quartKelly: r.bankrolls.quartKelly,
+            parisRegles: r.paris.count, parisEnAttente: r.enAttente.count, date: Date())
+        ResumeChampionnat.ecrire(resumes)
+    }
+
+    /// Attend que plus rien ne tourne, puis exécute `action` (chaînage des mises à jour).
+    private func quandLibre(_ action: @escaping () -> Void) {
+        if occupe {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.quandLibre(action) }
+        } else {
+            action()
+        }
+    }
+
+    /// Met à jour les cinq championnats l'un après l'autre : CSV football-data, cotes (si une clé
+    /// The Odds API est enregistrée : 1 crédit par championnat), puis xG. Un championnat dont la
+    /// saison change est laissé de côté : le remplacement de saison demande une confirmation, à
+    /// faire depuis ce championnat. `termine` reçoit un compte rendu par championnat.
+    func mettreAJourTout(termine: @escaping ([String]) -> Void = { _ in }) {
+        guard !majGlobaleEnCours, !occupe else { return }
+        majGlobaleEnCours = true
+        let depart = championnat
+        rapportsMajGlobale = []
+        var restants = Championnat.allCases
+
+        func suivant() {
+            guard !restants.isEmpty else {
+                quandLibre {
+                    self.changerChampionnat(depart)
+                    self.majGlobaleTexte = nil
+                    self.majGlobaleEnCours = false
+                    termine(self.rapportsMajGlobale)
+                }
+                return
+            }
+            let c = restants.removeFirst()
+            quandLibre {
+                self.changerChampionnat(c)
+                self.majGlobaleTexte = "\(c.nom)…"
+                self.telechargerMiseAJour { i in
+                    guard !i.fichiers.isEmpty else {
+                        self.rapportsMajGlobale.append("\(c.nom) : " + (i.erreurs.isEmpty ? "aucun fichier lisible." : i.resume))
+                        suivant()
+                        return
+                    }
+                    if i.remplaceSaison {
+                        self.rapportsMajGlobale.append("\(c.nom) : nouvelle saison détectée, ouvrez ce championnat et importez-la (confirmation requise).")
+                        suivant()
+                        return
+                    }
+                    self.importerCSV(i) { erreur in
+                        if let erreur {
+                            self.rapportsMajGlobale.append("\(c.nom) : \(erreur)")
+                            suivant()
+                            return
+                        }
+                        var lignes = ["\(c.nom) : import terminé."]
+                        if let n = self.noteCalendrier { lignes.append(n) }
+                        func xg() {
+                            self.telechargerXg { texte, _ in
+                                lignes.append(texte)
+                                self.rapportsMajGlobale.append(lignes.joined(separator: " "))
+                                suivant()
+                            }
+                        }
+                        if self.cotesEnLigneConfigurees {
+                            self.telechargerCotes { texte, _ in
+                                lignes.append(texte)
+                                xg()
+                            }
+                        } else {
+                            xg()
+                        }
+                    }
+                }
+            }
+        }
+        suivant()
+    }
+
     // MARK: - Logos
 
     private func chargerLogos() {
         var trouves: [String: NSImage] = [:]
-        if let d = dossierLocal?.appendingPathComponent(dossierLogos, isDirectory: true) {
-            for e in ligue.equipes {
+        if let d = racineLocale?.appendingPathComponent(dossierLogos, isDirectory: true) {
+            // Les clubs des autres championnats comptent aussi : la simulation commune les affiche.
+            let tous = ligue.equipes + autresChampionnats.flatMap { $0.ligue.equipes }
+            for e in Set(tous) {
                 let url = d.appendingPathComponent(Ecussons.nomFichier(e))
                 guard let attributs = try? FileManager.default.attributesOfItem(atPath: url.path),
                       let taille = attributs[.size] as? NSNumber, taille.intValue <= tailleMaxLogo,
@@ -1195,7 +1645,7 @@ final class Ligue1ViewModel: ObservableObject {
     private func copierLogos(depuis source: URL) -> Int {
         let fm = FileManager.default
         guard let fichiers = try? fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
-        let attendus = Set(ligue.equipes.map(Ecussons.nomFichier))
+        let attendus = Set((ligue.equipes + autresChampionnats.flatMap { $0.ligue.equipes }).map(Ecussons.nomFichier))
         let logos = fichiers.filter { attendus.contains($0.lastPathComponent) }
         var copies = 0
         func copier(vers dossier: URL) {
@@ -1208,13 +1658,13 @@ final class Ligue1ViewModel: ObservableObject {
                 if (try? fm.copyItem(at: f, to: cible)) != nil { copies += 1 }
             }
         }
-        if let local = dossierLocal { copier(vers: local.appendingPathComponent(dossierLogos, isDirectory: true)) }
+        if let racine = racineLocale { copier(vers: racine.appendingPathComponent(dossierLogos, isDirectory: true)) }
         return copies
     }
 
     /// Dossier des logos sur le disque local, créé au besoin.
     var dossierLogosLocal: URL? {
-        guard let d = dossierLocal?.appendingPathComponent(dossierLogos, isDirectory: true) else { return nil }
+        guard let d = racineLocale?.appendingPathComponent(dossierLogos, isDirectory: true) else { return nil }
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }
@@ -1460,7 +1910,7 @@ final class Ligue1ViewModel: ObservableObject {
     @discardableResult
     func exporterCSV() -> URL? {
         let jour = Jour.versISO(Jour.depuisDate(Date()))
-        guard let url = demanderEmplacement(nom: "Ligue1_export_\(jour).csv", type: .commaSeparatedText) else {
+        guard let url = demanderEmplacement(nom: "\(championnat.nom.replacingOccurrences(of: " ", with: "_"))_export_\(jour).csv", type: .commaSeparatedText) else {
             return nil
         }
         var lignes: [String] = []

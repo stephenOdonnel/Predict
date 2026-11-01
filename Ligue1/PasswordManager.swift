@@ -1,6 +1,6 @@
 //
 //  PasswordManager.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Pas de mot de passe : l'application s'ouvre directement. Ce fichier garde la
@@ -22,11 +22,11 @@ import CryptoKit
 /// et tout programme lancé sous ce compte peut le lire.
 enum StockageAuth {
 
-    /// Fichier dédié, hors du domaine de préférences : `defaults delete com.ligue1.app`
+    /// Fichier dédié, hors du domaine de préférences : `defaults delete com.predict.app`
     /// ne doit pas effacer la clé des sceaux.
     private static let dossier: URL? = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-        .appendingPathComponent("Ligue1", isDirectory: true)
+        .appendingPathComponent("Predict", isDirectory: true)
 
     private static var fichier: URL? { dossier?.appendingPathComponent("auth.json") }
 
@@ -115,7 +115,7 @@ enum StockageAuth {
 /// attaquant qui lirait aussi `auth.json` pour recalculer le sceau.
 enum IntegriteStockage {
 
-    private static let service = "com.ligue1.app.integrite"
+    private static let service = "com.predict.app.integrite"
     private static let compteCle = "hmac-key-v1"
     private static let prefixeAdoption = "hmac-adopte"
 
@@ -131,7 +131,7 @@ enum IntegriteStockage {
     private static func activer(_ nom: String) {
         guard !estActive(nom) else { return }
         StockageAuth.write(Data([1]), service: service, account: "\(prefixeAdoption).\(nom)",
-                           label: "Ligue1 – contrôle d'intégrité")
+                           label: "Predict – contrôle d'intégrité")
     }
 
     private static func cle() -> SymmetricKey {
@@ -141,7 +141,7 @@ enum IntegriteStockage {
         let nouvelle = SymmetricKey(size: .bits256)
         StockageAuth.write(nouvelle.withUnsafeBytes { Data($0) },
                            service: service, account: compteCle,
-                           label: "Ligue1 – clé d'intégrité")
+                           label: "Predict – clé d'intégrité")
         return nouvelle
     }
 

@@ -1,6 +1,6 @@
 //
 //  ProbabilitesView.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Probabilités de classement final (Monte Carlo), recalculées en arrière-plan

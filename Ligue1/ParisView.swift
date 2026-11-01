@@ -1,6 +1,6 @@
 //
 //  ParisView.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Simulation des paris : jauges (chacune rejoue tout l'historique), quatre
@@ -27,9 +27,11 @@ struct ParisView: View {
     @EnvironmentObject var vm: Ligue1ViewModel
     /// nil = seule la dernière journée est dépliée.
     @State private var depliees: Set<Int>?
+    @AppStorage("parisAttenteTout") private var toutAfficher = false
 
     var body: some View {
         let r = vm.resultatParis
+        let attente = Paris.attenteFiltree(r.enAttente, ligues: [("", vm.ligue)], tout: toutAfficher)
 
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.espaceL) {
@@ -38,7 +40,7 @@ struct ParisView: View {
                             lignes: ["\(FichierDonnees.reglages.nom) n'a pas pu être chargé : les jauges ne sont pas enregistrées."])
                 }
 
-                enTete(r)
+                enTete(r, attente)
                 jauges
                 PanneauMouvements()
                 PanneauPariManuel()
@@ -50,7 +52,7 @@ struct ParisView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 graphiques(r)
-                historique(r)
+                historique(r, attente)
 
                 Text("La cote double chance est calculée automatiquement à partir des cotes 1/N/2. Son espérance ne peut "
                      + "jamais dépasser celle du meilleur des deux marchés simples qui la composent : c'est un pari "
@@ -69,7 +71,7 @@ struct ParisView: View {
 
     // MARK: En-tête : seuil et bankrolls
 
-    private func enTete(_ r: ResultatParis) -> some View {
+    private func enTete(_ r: ResultatParis, _ attente: AttenteFiltree) -> some View {
         let gagnes = r.paris.filter(\.gagne).count
         return VStack(alignment: .leading, spacing: Theme.espaceM) {
             HStack(alignment: .top, spacing: Theme.espaceM) {
@@ -89,8 +91,8 @@ struct ParisView: View {
                 } icon: {
                     Image(systemName: "chart.bar.fill")
                 }
-                if !r.enAttente.isEmpty {
-                    Label("\(r.enAttente.count) en attente", systemImage: "hourglass")
+                if !attente.paris.isEmpty {
+                    Label("\(attente.paris.count) en attente", systemImage: "hourglass")
                         .foregroundColor(Theme.accent)
                 }
             }
@@ -170,23 +172,14 @@ struct ParisView: View {
 
     // MARK: Historique par journée
 
-    private func historique(_ r: ResultatParis) -> some View {
+    private func historique(_ r: ResultatParis, _ attente: AttenteFiltree) -> some View {
         let ouvertes = depliees ?? Set(r.journees.last.map { [$0.journee] } ?? [])
         return VStack(alignment: .leading, spacing: Theme.espaceS) {
             Text("Paris par journée")
                 .font(Theme.section)
 
             if !r.enAttente.isEmpty {
-                VStack(alignment: .leading, spacing: Theme.espaceS) {
-                    Label("En attente — \(r.enAttente.count) candidat(s) sur des matchs pas encore joués "
-                          + "(probabilité en direct, pas d'impact sur la bankroll)", systemImage: "hourglass")
-                        .font(Theme.section)
-                        .foregroundColor(Theme.accent)
-                    TableauParis(paris: r.enAttente.sorted { $0.journee < $1.journee })
-                }
-                .padding(Theme.espaceM)
-                .background(Theme.accent.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: Theme.rayon, style: .continuous))
+                BlocAttente(attente: attente, commun: false, tout: $toutAfficher)
             }
 
             if r.journees.isEmpty {
@@ -264,6 +257,7 @@ private struct GraphiqueBankroll: View {
     let finale: Double
     let gain: Double
     let depart: Double
+    var etiquette: (Int) -> String = { "J\($0)" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.espaceXS) {
@@ -292,7 +286,7 @@ private struct GraphiqueBankroll: View {
                     AxisGridLine().foregroundStyle(Theme.piste)
                     AxisValueLabel {
                         if let i = v.as(Int.self), points.indices.contains(i) {
-                            Text(points[i].journee == 0 ? "Départ" : "J\(points[i].journee)")
+                            Text(points[i].journee == 0 ? "Départ" : etiquette(points[i].journee))
                         }
                     }
                 }
@@ -317,6 +311,9 @@ private struct GraphiqueBankroll: View {
 private struct TableauParis: View {
     @EnvironmentObject var vm: Ligue1ViewModel
     let paris: [Pari]
+    /// Simulation commune : le championnat du pari est indiqué et « Exclure » est retiré
+    /// (il s'applique au championnat affiché seulement).
+    var commun = false
 
     static let largeurs: [CGFloat] = [150, 96, 56, 46, 46, 108, 108, 108, 108, 120, 64]
     static let titres = ["Match", "Marché", "p modèle", "Cote", "EV"] + MethodeMise.allCases.map(\.titreCourt) + ["Résultat", ""]
@@ -332,7 +329,7 @@ private struct TableauParis: View {
                 .font(Theme.legende.weight(.semibold))
                 .foregroundColor(.secondary)
                 ForEach(paris) { p in
-                    LignePari(pari: p)
+                    LignePari(pari: p, commun: commun)
                     Divider()
                 }
             }
@@ -343,6 +340,7 @@ private struct TableauParis: View {
 private struct LignePari: View {
     @EnvironmentObject var vm: Ligue1ViewModel
     let pari: Pari
+    var commun = false
 
     private var l: [CGFloat] { TableauParis.largeurs }
 
@@ -355,7 +353,7 @@ private struct LignePari: View {
                     Ecusson(equipe: pari.exterieur, taille: 16)
                 }
                 .frame(width: l[0], alignment: .leading)
-                .help("J\(pari.journee) · \(pari.domicile) – \(pari.exterieur)")
+                .help((pari.championnat.isEmpty ? "" : pari.championnat + " · ") + "J\(pari.journee) · \(pari.domicile) – \(pari.exterieur)")
                 Text(pari.marche.titre + (pari.manuel ? " [manuel]" : ""))
                     .frame(width: l[1], alignment: .leading)
                 Text(Format.pourcent(pari.p * 100, decimales: 1, fixe: true)).frame(width: l[2], alignment: .leading)
@@ -370,15 +368,21 @@ private struct LignePari: View {
                         .frame(width: l[5 + i], alignment: .leading)
                 }
                 resultat.frame(width: l[9], alignment: .leading)
-                Button("Exclure") {
-                    if let e = vm.exclure(PariExclu(journee: pari.journee, home: pari.domicile, away: pari.exterieur,
-                                                    market: pari.marche)) {
-                        vm.log(e, level: .warning)
+                if commun {
+                    Text((Championnat.allCases.first { $0.nom == pari.championnat }?.drapeau ?? "") + " J\(pari.journee)")
+                        .frame(width: l[10], alignment: .leading)
+                        .help(pari.championnat)
+                } else {
+                    Button("Exclure") {
+                        if let e = vm.exclure(PariExclu(journee: pari.journee, home: pari.domicile, away: pari.exterieur,
+                                                        market: pari.marche)) {
+                            vm.log(e, level: .warning)
+                        }
                     }
+                    .controlSize(.small)
+                    .disabled(!vm.peutModifier(.parisExclus))
+                    .frame(width: l[10], alignment: .leading)
                 }
-                .controlSize(.small)
-                .disabled(!vm.peutModifier(.parisExclus))
-                .frame(width: l[10], alignment: .leading)
             }
             .font(Theme.legende)
             .monospacedDigit()
@@ -800,7 +804,7 @@ struct ConseilsView: View {
         } else {
             Bandeau(titre: "Précision inconnue",
                     lignes: ["Il faut au moins deux saisons d'historique : « Mettre à jour en ligne » (Paramètres › Saison) "
-                             + "charge les 10 dernières saisons de Ligue 1."])
+                             + "charge les 10 dernières saisons du championnat."])
         }
     }
 
@@ -1036,5 +1040,253 @@ private struct CarteConseil: View {
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+// MARK: - Section « Simulation des paris » : un championnat ou tous
+
+/// Bascule entre la simulation du championnat affiché et la simulation commune aux cinq.
+struct ParisSection: View {
+    @EnvironmentObject var vm: Ligue1ViewModel
+    @AppStorage("parisTousChampionnats") private var tous = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Portée", selection: $tous) {
+                Text(vm.championnat.nom).tag(false)
+                Text("Tous les championnats").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .padding(.top, Theme.espaceM)
+            .padding(.bottom, Theme.espaceXS)
+
+            if tous { ParisToutView() } else { ParisView() }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// Une seule bankroll pour les cinq championnats (voir `Paris.historiqueTous`).
+struct ParisToutView: View {
+    @EnvironmentObject var vm: Ligue1ViewModel
+    @State private var depliees: Set<Int>?
+    @AppStorage("parisAttenteTout") private var toutAfficher = false
+
+    var body: some View {
+        let calcul = vm.resultatParisTous
+        let r = calcul.resultat
+        let libelles = calcul.libelles
+        let attente = Paris.attenteFiltree(r.enAttente,
+                                           ligues: vm.entreesTous.map { ($0.championnat.nom, $0.ligue) },
+                                           tout: toutAfficher)
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.espaceL) {
+                if vm.autresEnCours {
+                    HStack(spacing: Theme.espaceS) {
+                        ProgressView().controlSize(.small)
+                        Text("Lecture des autres championnats…")
+                            .font(Theme.legende)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                if !vm.autresIllisibles.isEmpty {
+                    Bandeau(titre: "Championnat(s) non lu(s)",
+                            lignes: ["\(vm.autresIllisibles.map(\.nom).joined(separator: ", ")) : fichiers modifiés hors de l'application "
+                                     + "ou sans sceau. Ouvrez ce championnat pour régler la revue d'intégrité."])
+                }
+
+                enTete(r, attente)
+                reglageDepart
+                resumeChampionnats(r, attente)
+
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.espaceM), GridItem(.flexible())],
+                          spacing: Theme.espaceM) {
+                    ForEach(MethodeMise.allCases) { k in
+                        GraphiqueBankroll(methode: k, points: r.historique, finale: r.bankrolls[k],
+                                          gain: r.gainsPourcent[k], depart: vm.bankrollDepartGlobal,
+                                          etiquette: { libelles[$0].map { String($0.suffix(5)) } ?? "S\($0)" })
+                    }
+                }
+
+                historique(r, libelles, attente)
+
+                Text("Une seule bankroll pour les cinq championnats, rejouée semaine par semaine (du lundi au dimanche) : "
+                     + "les paris d'une même semaine, tous championnats confondus, partent de la même bankroll et "
+                     + "s'appliquent ensemble en fin de semaine. La sélection des paris suit les réglages de chaque "
+                     + "championnat (seuil, cotes, poids du modèle, paris forcés ou exclus : à modifier en ouvrant "
+                     + "le championnat) ; la bankroll de départ est commune et se règle ci-dessus. Les dépôts et "
+                     + "retraits d'un championnat sont appliqués dans la semaine de leur journée. "
+                     + "Seuls les matchs joués avec cotes et probabilité pré-match figée comptent.")
+                    .font(Theme.legende)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding()
+        }
+        .onAppear { vm.chargerAutresChampionnats() }
+    }
+
+    private func enTete(_ r: ResultatParis, _ attente: AttenteFiltree) -> some View {
+        let gagnes = r.paris.filter(\.gagne).count
+        return VStack(alignment: .leading, spacing: Theme.espaceM) {
+            HStack(alignment: .top, spacing: Theme.espaceM) {
+                ForEach(MethodeMise.allCases) { k in
+                    TuileChiffre(titre: k.titre, valeur: Format.euro(r.bankrolls[k]),
+                                 detail: "\(Format.signe(r.gainsPourcent[k])) % sur l'argent engagé",
+                                 icone: "banknote", couleurValeur: k.couleur)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: Theme.espaceM) {
+                Label {
+                    Text("\(gagnes) pari\(gagnes > 1 ? "s" : "") gagné\(gagnes > 1 ? "s" : "") sur \(r.paris.count) au total"
+                         + (r.paris.isEmpty ? "" : " (\(Format.pourcent(Double(gagnes) / Double(r.paris.count) * 100, decimales: 0)) de réussite)"))
+                } icon: {
+                    Image(systemName: "chart.bar.fill")
+                }
+                if !attente.paris.isEmpty {
+                    Label("\(attente.paris.count) en attente", systemImage: "hourglass")
+                        .foregroundColor(Theme.accent)
+                }
+            }
+            .font(Theme.section)
+        }
+    }
+
+    private var reglageDepart: some View {
+        HStack(spacing: Theme.espaceM) {
+            Text("Bankroll de départ commune")
+                .font(Theme.corps)
+                .frame(width: 210, alignment: .leading)
+            Slider(value: Binding(get: { vm.bankrollDepartGlobal },
+                                  set: { vm.bankrollDepartGlobal = ($0 / 50).rounded() * 50 }),
+                   in: 100...10_000, step: 50)
+                .frame(width: 200)
+            Text(Format.euro(vm.bankrollDepartGlobal))
+                .font(Theme.corps.weight(.semibold))
+                .foregroundColor(Theme.accent)
+                .monospacedDigit()
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.espaceM)
+        .carte()
+    }
+
+    /// Paris réglés et en attente de chaque championnat.
+    private func resumeChampionnats(_ r: ResultatParis, _ attente: AttenteFiltree) -> some View {
+        VStack(alignment: .leading, spacing: Theme.espaceXS) {
+            Text("Par championnat")
+                .font(Theme.section)
+            ForEach(Championnat.allCases) { c in
+                let reglesC = r.paris.filter { $0.championnat == c.nom }
+                let gagnesC = reglesC.filter(\.gagne).count
+                let attenteC = attente.paris.filter { $0.championnat == c.nom }.count
+                let gain = reglesC.reduce(0.0) { $0 + $1.gains.fixe }
+                HStack {
+                    Text("\(c.drapeau) \(c.nom)")
+                        .frame(width: 170, alignment: .leading)
+                    Text("\(reglesC.count) pari\(reglesC.count > 1 ? "s" : "") (\(gagnesC) gagné\(gagnesC > 1 ? "s" : "")), \(attenteC) en attente")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("mise fixe : \(gain >= 0 ? "+" : "")\(Format.euro(gain))")
+                        .foregroundColor(gain >= 0 ? Theme.gain : Theme.perte)
+                        .monospacedDigit()
+                }
+                .font(Theme.corps)
+            }
+        }
+        .padding(Theme.espaceM)
+        .carte()
+    }
+
+    private func historique(_ r: ResultatParis, _ libelles: [Int: String], _ attente: AttenteFiltree) -> some View {
+        let ouvertes = depliees ?? Set(r.journees.last.map { [$0.journee] } ?? [])
+        return VStack(alignment: .leading, spacing: Theme.espaceS) {
+            Text("Paris par semaine")
+                .font(Theme.section)
+
+            if !r.enAttente.isEmpty {
+                BlocAttente(attente: attente, commun: true, tout: $toutAfficher)
+            }
+
+            if r.journees.isEmpty {
+                EtatVide(icone: "eurosign.circle", titre: "Aucun pari retenu",
+                         detail: "Saisissez des cotes sur des matchs joués, ou assouplissez les jauges d'un championnat.")
+            }
+
+            ForEach(r.journees.reversed()) { j in
+                DisclosureGroup(isExpanded: Binding(
+                    get: { ouvertes.contains(j.journee) },
+                    set: { ouvert in
+                        var s = ouvertes
+                        if ouvert { s.insert(j.journee) } else { s.remove(j.journee) }
+                        depliees = s
+                    }
+                )) {
+                    TableauParis(paris: j.paris, commun: true)
+                        .padding(.top, Theme.espaceXS)
+                } label: {
+                    HStack {
+                        Text("\(libelles[j.journee] ?? "Semaine \(j.journee)")  —  \(j.gagnes)/\(j.paris.count) pari\(j.paris.count > 1 ? "s" : "") gagné\(j.gagnes > 1 ? "s" : "")")
+                            .font(Theme.corps.weight(.semibold))
+                            .foregroundColor(j.gagnes * 2 >= j.paris.count ? Theme.gain : .secondary)
+                        Spacer()
+                        Text(MethodeMise.allCases.map { "\($0.titre) : \(Format.signe(j.pourcentage[$0])) %" }
+                                .joined(separator: "   "))
+                            .font(Theme.legende)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(Theme.espaceS)
+                .carte(Theme.rayonPetit)
+            }
+        }
+    }
+}
+
+// MARK: - Paris en attente : bandeau et tableau
+
+/// Paris sur des matchs pas encore joués : par défaut ceux de la journée en cours seulement.
+private struct BlocAttente: View {
+    let attente: AttenteFiltree
+    let commun: Bool
+    @Binding var tout: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.espaceS) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("En attente — \(attente.paris.count) candidat(s) · \(attente.libelle)", systemImage: "hourglass")
+                    .font(Theme.section)
+                    .foregroundColor(Theme.accent)
+                Spacer()
+                Button(tout ? "Journée en cours seulement" : "Tout afficher") { tout.toggle() }
+                    .controlSize(.small)
+            }
+            if attente.filtre {
+                Text("Journée en cours = la première qui a encore un match attendu. Un match sans résultat plus de "
+                     + "\(Paris.delaiReport) jours après sa date (reporté) est mis de côté"
+                     + (attente.reportes > 0 ? " : \(attente.reportes) en ce moment" : "")
+                     + " ; ses paris reviennent avec sa nouvelle date.")
+                    .font(Theme.legende)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if attente.paris.isEmpty {
+                Text("Aucun pari retenu pour le moment.")
+                    .font(Theme.corps)
+                    .foregroundColor(.secondary)
+            } else {
+                TableauParis(paris: attente.paris.sorted { ($0.championnat, $0.journee) < ($1.championnat, $1.journee) },
+                             commun: commun)
+            }
+        }
+        .padding(Theme.espaceM)
+        .background(Theme.accent.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: Theme.rayon, style: .continuous))
     }
 }

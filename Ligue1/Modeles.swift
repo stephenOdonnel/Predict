@@ -1,6 +1,6 @@
 //
 //  Modeles.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Données de la saison : équipes, matchs (date, score, cotes de référence,
@@ -525,19 +525,19 @@ struct Historique: DocumentScelle, Equatable {
     }
 }
 
-/// CSV de football-data.co.uk : F1.csv (une saison de Ligue 1, matchs joués)
+/// CSV de football-data.co.uk : F1.csv, D1.csv, E0.csv, I1.csv ou SP1.csv (une saison du championnat actif, matchs joués)
 /// et fixtures.csv (matchs de la semaine à venir, toutes divisions), importés
 /// par l'utilisateur ou téléchargés à sa demande (« Mettre à jour en ligne »).
 enum FootballData {
-    static let page = URL(string: "https://www.football-data.co.uk/francem.php")!
+    static var page: URL { Championnat.actif.pageFootballData }
     static let fixtures = URL(string: "https://www.football-data.co.uk/fixtures.csv")!
 
-    /// F1.csv d'une saison : « 2025-26 » → …/mmz4281/2526/F1.csv.
+    /// Fichier d'une saison du championnat actif : « 2025-26 » → …/mmz4281/2526/F1.csv.
     static func urlSaison(_ saison: String) -> URL? {
         let chiffres = saison.split(separator: "-")
         guard chiffres.count == 2, chiffres[0].count == 4, chiffres[1].count == 2,
               chiffres.allSatisfy({ $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) }) else { return nil }
-        return URL(string: "https://www.football-data.co.uk/mmz4281/\(chiffres[0].suffix(2))\(chiffres[1])/F1.csv")
+        return URL(string: "https://www.football-data.co.uk/mmz4281/\(chiffres[0].suffix(2))\(chiffres[1])/\(Championnat.actif.codeCSV).csv")
     }
 
     /// Un match du CSV : joué (score) ou seulement programmé.
@@ -587,19 +587,8 @@ enum FootballData {
         var errorDescription: String? { message }
     }
 
-    /// Noms football-data.co.uk → noms affichés.
-    static let clubs: [String: String] = [
-        "Paris SG": "Paris Saint Germain", "Marseille": "Olympique de Marseille", "Lyon": "Olympique Lyonnais",
-        "Monaco": "AS Monaco", "Lille": "LOSC", "Nice": "OGC Nice", "Rennes": "Stade Rennais FC", "Lens": "RC Lens",
-        "Strasbourg": "RC Strasbourg", "Brest": "Stade Brestois", "Nantes": "FC Nantes", "Toulouse": "Toulouse FC",
-        "Lorient": "FC Lorient", "Metz": "FC Metz", "Auxerre": "AJ Auxerre", "Angers": "Angers SCO",
-        "Le Havre": "Le Havre", "Paris FC": "Paris FC", "Reims": "Stade de Reims", "Montpellier": "Montpellier HSC",
-        "St Etienne": "AS Saint-Etienne", "Bordeaux": "Girondins de Bordeaux", "Nimes": "Nîmes Olympique",
-        "Dijon": "Dijon FCO", "Amiens": "Amiens SC", "Caen": "SM Caen", "Guingamp": "EA Guingamp", "Bastia": "SC Bastia",
-        "Nancy": "AS Nancy-Lorraine", "Troyes": "ESTAC Troyes", "Clermont": "Clermont Foot", "Ajaccio": "AC Ajaccio",
-        "Ajaccio GFCO": "GFC Ajaccio", "Evian Thonon Gaillard": "Évian TG", "Sochaux": "FC Sochaux",
-        "Valenciennes": "Valenciennes FC"
-    ]
+    /// Noms football-data.co.uk → noms affichés, pour le championnat actif.
+    static var clubs: [String: String] { Championnat.actif.clubs }
 
     /// Cotes retenues, de la plus fiable à la moins fiable : clôture Pinnacle,
     /// clôture moyenne, puis ouverture (Pinnacle, moyenne, Bet365).
@@ -613,7 +602,7 @@ enum FootballData {
     private static let colonnesOuverture = [("PSH", "PSD", "PSA"), ("B365H", "B365D", "B365A"), ("AvgH", "AvgD", "AvgA"),
                                             ("BbAvH", "BbAvD", "BbAvA")]
 
-    /// Lit un CSV ; seules les lignes de Ligue 1 (F1) sont gardées et la saison
+    /// Lit un CSV ; seules les lignes du championnat actif (F1, D1, E0, I1, SP1) sont gardées et la saison
     /// est déduite des dates (elle commence en juillet).
     static func lire(_ donnees: Data, nom: String, equipesConnues: [String]) throws -> Fichier {
         guard var texte = String(data: donnees, encoding: .utf8) ?? String(data: donnees, encoding: .isoLatin1) else {
@@ -645,7 +634,7 @@ enum FootballData {
         for ligne in lignes.dropFirst() {
             let c = champs(ligne)
             func champ(_ i: Int?) -> String { i.flatMap { $0 < c.count ? c[$0] : nil } ?? "" }
-            if !champ(iDiv).isEmpty, champ(iDiv) != "F1" {
+            if !champ(iDiv).isEmpty, champ(iDiv) != Championnat.actif.codeCSV {
                 autresDivisions.insert(champ(iDiv))
                 continue
             }
@@ -664,7 +653,7 @@ enum FootballData {
         }
         guard let debut = debuts.max(by: { ($0.value, $0.key) < ($1.value, $1.key) })?.key else {
             if !autresDivisions.isEmpty {
-                throw Erreur(message: "\(nom) : aucun match de Ligue 1 (F1), seulement "
+                throw Erreur(message: "\(nom) : aucun match de \(Championnat.actif.nom) (\(Championnat.actif.codeCSV)), seulement "
                              + "\(autresDivisions.sorted().joined(separator: ", ")).")
             }
             throw Erreur(message: "\(nom) : aucun match.")
@@ -826,7 +815,7 @@ enum CotesEnLigne {
 
     static func url(cle: String) -> URL? {
         guard cleValide(cle) else { return nil }
-        var c = URLComponents(string: "https://api.the-odds-api.com/v4/sports/soccer_france_ligue_one/odds/")
+        var c = URLComponents(string: "https://api.the-odds-api.com/v4/sports/\(Championnat.actif.cleCotes)/odds/")
         c?.queryItems = [
             URLQueryItem(name: "apiKey", value: cle),
             URLQueryItem(name: "bookmakers", value: livres.keys.sorted().joined(separator: ",")),
@@ -892,7 +881,10 @@ enum CotesEnLigne {
         let cible = mots(brut)
         guard !cible.isEmpty else { return nil }
         let formes = equipes.map { e in
-            (e, ([mots(e)] + FootballData.clubs.filter { $0.value == e }.map { mots($0.key) }).filter { !$0.isEmpty })
+            // Le nom enregistré peut être l'ancienne graphie football-data (« Espanol ») : son nom
+            // affiché actuel (« Espanyol ») compte aussi.
+            (e, ([mots(e)] + FootballData.clubs.filter { $0.value == e }.map { mots($0.key) }
+                 + (FootballData.clubs[e].map { [mots($0)] } ?? [])).filter { !$0.isEmpty })
         }
         let exacts = formes.filter { $0.1.contains(cible) }.map(\.0)
         if exacts.count == 1 { return exacts[0] }
@@ -936,7 +928,7 @@ extension Ligue {
         } else {
             guard noms.count >= 16, noms.count % 2 == 0 else {
                 throw FootballData.Erreur(message: "Saison \(saison) incomplète : \(noms.count) équipes seulement. "
-                                          + "Importez le F1.csv de la saison, ou fixtures.csv de sa 1re journée.")
+                                          + "Importez le CSV de la saison, ou fixtures.csv de sa 1re journée.")
             }
         }
         let equipes = existante?.equipes ?? noms.sorted()
@@ -963,9 +955,16 @@ extension Ligue {
                 matchs.append(m)
             }
         }
-        let journees = Calendrier.journees(matchs.map { .init(domicile: $0.domicile, exterieur: $0.exterieur, date: $0.date) },
-                                           equipes: equipes)
-        for i in matchs.indices { matchs[i].journee = journees[i] }
+        // Calendrier officiel connu et complet : il prime sur le calcul d'après les dates, qui ne
+        // peut deviner que les journées déjà datées (les autres seraient réparties au hasard).
+        if let officiel = CalendrierOfficiel.journees(saison: saison, equipes: equipes),
+           matchs.allSatisfy({ officiel["\($0.domicile)|\($0.exterieur)"] != nil }) {
+            for i in matchs.indices { matchs[i].journee = officiel["\(matchs[i].domicile)|\(matchs[i].exterieur)"] ?? 1 }
+        } else {
+            let journees = Calendrier.journees(matchs.map { .init(domicile: $0.domicile, exterieur: $0.exterieur, date: $0.date) },
+                                               equipes: equipes)
+            for i in matchs.indices { matchs[i].journee = journees[i] }
+        }
         matchs.sort { ($0.journee, $0.date ?? "9999", $0.domicile) < ($1.journee, $1.date ?? "9999", $1.domicile) }
         return Ligue(season: saison, teams: equipes.map { Equipe(name: $0) }, matches: matchs)
     }

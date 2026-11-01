@@ -1,6 +1,6 @@
 //
 //  Optimisation.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Minimisation sous bornes (L-BFGS projeté), à la place de

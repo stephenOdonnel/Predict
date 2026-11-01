@@ -1,6 +1,6 @@
 //
 //  BacktestView.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Précision walk-forward du modèle (log-loss, RPS, Brier) comparée au
@@ -197,7 +197,7 @@ struct BacktestView: View {
                 .font(Theme.section)
             if saisons.count < 2 {
                 EtatVide(icone: "clock.arrow.circlepath", titre: "Pas assez d'historique",
-                         detail: "Téléchargez les 10 saisons précédentes de Ligue 1 sur football-data.co.uk (fichiers F1.csv), "
+                         detail: "Téléchargez les 10 saisons précédentes du championnat sur football-data.co.uk (fichiers CSV), "
                          + "puis importez-les : la calibration se fait à l'import. Deux saisons terminées au minimum ; "
                          + "d'ici là, le modèle tourne avec ses valeurs de départ.")
             } else {

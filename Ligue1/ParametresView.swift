@@ -1,6 +1,6 @@
 //
 //  ParametresView.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Fenêtre Paramètres (⌘,) : saison, sauvegarde, export, apparence.
@@ -213,6 +213,22 @@ private struct ReglageCotesEnLigne: View {
                 if vm.cotesEnCours {
                     ProgressView().controlSize(.small)
                 }
+            }
+            .font(Theme.corps)
+            HStack(spacing: Theme.espaceM) {
+                Button {
+                    statut = nil
+                    vm.telechargerXg { statut = ($0, $1) }
+                } label: {
+                    Label(vm.xgEnCours ? "Téléchargement…" : "Actualiser les xG", systemImage: "chart.bar")
+                }
+                .disabled(vm.xgEnCours || vm.importEnCours || vm.blocageIntegrite != nil || !vm.saisonDisponible)
+                if vm.xgEnCours {
+                    ProgressView().controlSize(.small)
+                }
+                Text("xG des matchs joués, depuis Understat (aucune clé). Un xG déjà saisi n'est jamais écrasé ; un match absent reçoit aussi son score.")
+                    .font(Theme.legende)
+                    .foregroundColor(.secondary)
             }
             .font(Theme.corps)
             Link(destination: CotesEnLigne.site) {
@@ -454,7 +470,7 @@ private struct OngletAide: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.espaceS) {
-                Text("Comment utiliser Ligue1")
+                Text("Comment utiliser Predict")
                     .font(Theme.section)
                 Text("Dépliez une rubrique. L'application estime la force de chaque équipe (modèle Dixon-Coles), "
                      + "simule la fin de saison et teste une stratégie de paris sur les cotes saisies.")
@@ -464,7 +480,7 @@ private struct OngletAide: View {
 
                 Rubrique("Premiers pas", icone: "1.circle", lignes: [
                     "Onglet Saison : importez les CSV de football-data.co.uk (saison en cours et 10 saisons passées) ; c'est la seule source de données.",
-                    "Les données sont enregistrées dans Documents › Ligue1.",
+                    "Les données sont enregistrées dans Documents › Predict.",
                     "Pas de mot de passe : l'application s'ouvre directement sur le tableau de bord.",
                     "Tout ce que vous modifiez est enregistré aussitôt (cotes, xG, minutes et jauges après 0,4 s sans frappe)."
                 ])
@@ -476,7 +492,7 @@ private struct OngletAide: View {
                 ])
                 Rubrique("Journées & cotes", icone: "sportscourt", lignes: [
                     "Une carte par match : date, score, xG, minutes des buts, forfait, cotes de référence du CSV et cotes Winamax, Unibet, Bwin et Betclic à saisir.",
-                    "Scores et cotes de référence arrivent avec le F1.csv de la saison ; un score importé fige la probabilité pré-match du modèle ajusté sur les journées précédentes.",
+                    "Scores et cotes de référence arrivent avec le CSV de la saison ; un score importé fige la probabilité pré-match du modèle ajusté sur les journées précédentes.",
                     "Avant le match : probabilités 1/N/2 du modèle en direct, ou des xG saisis s'ils sont renseignés.",
                     "Au premier score validé, la probabilité pré-match est figée et ne sera plus jamais recalculée, même si vous corrigez le score. « Effacer » la libère.",
                     "Le xG réel nourrit aussi le modèle (mélange 50 % buts, 50 % xG) et donne la ligne « Après-match ».",
@@ -507,8 +523,8 @@ private struct OngletAide: View {
                     "Verdict : « Parier » si ce résultat est significativement positif, « Ne pas parier » s'il est négatif (ou si la règle entière perd), sinon « Petite mise au plus »."
                 ])
                 Rubrique("Données (football-data.co.uk)", icone: "tablecells", lignes: [
-                    "Téléchargez vous-même les CSV de Ligue 1 sur football-data.co.uk (page France, « Le Championnat », un fichier F1.csv par saison), et si vous le voulez fixtures.csv.",
-                    "« Mettre à jour en ligne » : seul accès réseau de l'application (automatique au premier lancement). Il télécharge fixtures.csv, le F1.csv de la saison en cours et ceux des 10 saisons précédentes qui manquent, puis les importe ; rien n'est envoyé.",
+                    "Téléchargez vous-même les CSV du championnat affiché sur football-data.co.uk (un fichier par saison : F1, D1, E0, I1 ou SP1), et si vous le voulez fixtures.csv.",
+                    "« Mettre à jour en ligne » : seul accès réseau de l'application (automatique au premier lancement). Il télécharge fixtures.csv, le CSV de la saison en cours et ceux des 10 saisons précédentes qui manquent, puis les importe ; rien n'est envoyé.",
                     "Avec une clé The Odds API (onglet Saison), il télécharge aussi les cotes Winamax, Unibet et Betclic des matchs à venir ; seule la clé est envoyée, à the-odds-api.com.",
                     "Importez-les tous d'un coup : la saison est déduite des dates. La plus récente devient la saison en cours, les autres forment l'historique ; une saison réimportée remplace l'ancienne.",
                     "Journées déduites des dates ; les matchs pas encore programmés complètent le calendrier jusqu'à la dernière journée.",
@@ -516,8 +532,8 @@ private struct OngletAide: View {
                     "Noms de clubs convertis pour l'affichage (« Paris SG » → « Paris Saint Germain »)."
                 ])
                 Rubrique("Sauvegarde et intégrité", icone: "lock.shield", lignes: [
-                    "Les fichiers de données sont scellés par l'application : s'ils sont modifiés en dehors de Ligue1, une revue d'intégrité montre les différences avant d'accepter ou refuser, et la saisie est bloquée en attendant.",
-                    "Chaque enregistrement est écrit dans Documents › Ligue1 ; la dernière sauvegarde est affichée dans la barre latérale."
+                    "Les fichiers de données sont scellés par l'application : s'ils sont modifiés en dehors de Predict, une revue d'intégrité montre les différences avant d'accepter ou refuser, et la saisie est bloquée en attendant.",
+                    "Chaque enregistrement est écrit dans Documents › Predict ; la dernière sauvegarde est affichée dans la barre latérale."
                 ])
                 Rubrique("Raccourcis", icone: "keyboard", lignes: [
                     "⌘R : recalculer le classement final.  ⌘, : Paramètres.",
@@ -525,7 +541,7 @@ private struct OngletAide: View {
                     "Apparence : menu Présentation ou onglet Apparence (clair, sombre, système, sections de la barre latérale)."
                 ])
                 Rubrique("Limites à connaître", icone: "exclamationmark.triangle", lignes: [
-                    "Égalité parfaite : points, différence de buts, buts marqués — sans le mini-championnat des confrontations directes de la Ligue 1.",
+                    "Égalité parfaite : points, différence de buts, buts marqués — sans le mini-championnat des confrontations directes.",
                     "Les CSV apportent les cotes de référence (Pinnacle, moyenne du marché) et Bwin ; Winamax, Unibet et Betclic viennent de The Odds API (clé requise) ou de la saisie.",
                     "Pas de xG dans les CSV : à saisir si vous le voulez.",
                     "Les journées des matchs non programmés sont provisoires ; fixtures.csv donne les vraies au fil des semaines.",
@@ -631,7 +647,7 @@ private struct OngletAPropos: View {
 
     private var dossierCle: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Ligue1", isDirectory: true)
+            .appendingPathComponent("Predict", isDirectory: true)
     }
 
     private var lignes: [(String, String)] {
@@ -661,7 +677,7 @@ private struct OngletAPropos: View {
                         .resizable()
                         .frame(width: 56, height: 56)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Ligue1")
+                        Text("Predict")
                             .font(Theme.titre)
                         Text("Simulateur de fin de saison et de paris")
                             .font(Theme.legende)
@@ -711,11 +727,11 @@ private struct OngletAPropos: View {
                     Label("Logiciel libre — GNU GPL", systemImage: "chevron.left.forwardslash.chevron.right")
                         .font(Theme.corps)
                         .fontWeight(.semibold)
-                    Text("Ligue1 est un logiciel libre de Stephen O'Donnell et Tanguy Labbe, diffusé sous la licence publique "
+                    Text("Predict est un logiciel libre de Stephen O'Donnell et Tanguy Labbe, diffusé sous la licence publique "
                          + "générale GNU, version 3 ou ultérieure : vous pouvez l'utiliser, l'étudier, le modifier et le "
                          + "redistribuer, à condition que toute version redistribuée reste sous la même licence, code source "
                          + "compris. Fourni sans aucune garantie ; probabilités et conseils sont indicatifs. Texte complet dans "
-                         + "le fichier LICENSE du code source. « Ligue 1 » et les écussons des clubs sont des marques de leurs "
+                         + "le fichier LICENSE du code source. Les noms des championnats et les écussons des clubs sont des marques de leurs "
                          + "titulaires respectifs.")
                         .font(Theme.legende)
                         .foregroundColor(.secondary)

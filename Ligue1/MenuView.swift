@@ -1,6 +1,6 @@
 //
 //  MenuView.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 import SwiftUI
@@ -15,6 +15,8 @@ struct MenuItem: Identifiable {
 
     /// Sections de la barre latérale, dans l'ordre d'affichage.
     static let toutes: [MenuItem] = [
+        MenuItem(id: "ensemble", title: "Vue d'ensemble", icon: "square.grid.2x2",
+                 detail: "Les 5 championnats, total des bankrolls"),
         MenuItem(id: "tableau", title: "Tableau de bord", icon: "chart.bar.xaxis",
                  detail: "Prochaine journée, conseils, classement"),
         MenuItem(id: "journees", title: "Journées & cotes", icon: "sportscourt",
@@ -105,10 +107,37 @@ struct MenuView: View {
                     .frame(width: 40, height: 40)
                     .accessibilityHidden(true)
 
-                SignatureLigue1()
-                    .frame(height: 34)
+                Text("Predict")
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundStyle(LinearGradient(colors: [.mint, Theme.accent, .blue],
+                                                    startPoint: .leading, endPoint: .trailing))
             }
             .padding(.vertical, Theme.espaceXS)
+            .selectionDisabled(true)
+
+            // Championnat affiché : chacun a ses données, son modèle et sa simulation de paris.
+            Section("Championnat") {
+                Picker("Championnat", selection: Binding(get: { vm.championnat },
+                                                          set: { vm.changerChampionnat($0) })) {
+                    ForEach(Championnat.allCases) { c in
+                        Text("\(c.drapeau) \(c.nom)").tag(c)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .disabled(vm.occupe || vm.majGlobaleEnCours)
+                .help(vm.occupe || vm.majGlobaleEnCours
+                      ? "Un calcul ou un téléchargement est en cours."
+                      : "Changer de championnat")
+                if vm.majGlobaleEnCours {
+                    HStack(spacing: Theme.espaceS) {
+                        ProgressView().controlSize(.small)
+                        Text("Mise à jour : \(vm.majGlobaleTexte ?? "")")
+                            .font(Theme.legende)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
             .selectionDisabled(true)
 
             // Menu items — List native : survol, teinte d'accent du système,
@@ -218,19 +247,21 @@ struct MenuView: View {
     // MARK: Contenu
 
     private var titreSection: String {
-        menuItems.first { $0.id == selectedID }?.title ?? "Ligue 1"
+        menuItems.first { $0.id == selectedID }?.title ?? "Predict"
     }
 
     private var detail: some View {
         Group {
-            if !vm.saisonDisponible {
+            if selectedID == "ensemble" {
+                EnsembleView(selection: $selectedID)
+            } else if !vm.saisonDisponible {
                 BienvenueView()
             } else {
                 switch selectedID {
                 case "journees":     JourneesView()
                 case "classements":  ClassementsView()
                 case "equipe":       AnalyseEquipeView()
-                case "paris":        ParisView()
+                case "paris":        ParisSection()
                 case "conseils":     ConseilsView()
                 case "probabilites": ProbabilitesView()
                 case "backtest":     BacktestView()
@@ -239,8 +270,9 @@ struct MenuView: View {
             }
         }
         .environmentObject(vm)
+        .id(vm.championnat)
         .frame(minWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(titreSection)
+        .navigationTitle(selectedID == "ensemble" ? titreSection : "\(vm.championnat.nom) · \(titreSection)")
         .toolbar {
             // Un seul élément, toujours présent : le pont SwiftUI → NSToolbar
             // n'a ainsi jamais à recréer ses éléments en cours de layout.
@@ -275,7 +307,7 @@ struct BienvenueView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.espaceM) {
-            Label("Bienvenue dans Ligue1", systemImage: "hand.wave.fill")
+            Label("Predict · \(vm.championnat.nom)", systemImage: "hand.wave.fill")
                 .font(Theme.titre)
             Text("Toutes les données viennent des CSV gratuits de football-data.co.uk : scores et cotes de la saison "
                  + "en cours, et les 10 saisons précédentes pour calibrer le modèle. Ils se téléchargent à l'ouverture "
@@ -303,15 +335,16 @@ struct BienvenueView: View {
 /// Où trouver les CSV et comment les importer.
 struct EtapesCSV: View {
     private static let etapes = [
-        "« Mettre à jour en ligne » télécharge sur football-data.co.uk le F1.csv de la saison en cours, ceux des 10 "
+        "« Mettre à jour en ligne » télécharge sur football-data.co.uk le CSV de la saison en cours, ceux des 10 "
             + "saisons précédentes qui manquent et fixtures.csv (matchs de la semaine avec leurs cotes), puis les importe. "
             + "Au premier lancement, c'est automatique. Avec une clé The Odds API (Paramètres › Saison), il "
-            + "télécharge aussi les cotes Winamax, Unibet et Betclic des matchs à venir.",
+            + "télécharge aussi les cotes Winamax, Unibet et Betclic des matchs à venir. Les xG des matchs joués "
+            + "viennent d'Understat (sans clé) ; un xG déjà saisi n'est jamais écrasé.",
         "La saison de chaque fichier est lue dans ses dates : la plus récente devient la saison en cours, les autres "
             + "forment l'historique, sur lequel le modèle est calibré.",
         "Chaque semaine, « Mettre à jour en ligne » de nouveau : scores, cotes de référence et cotes moyennes se mettent "
             + "à jour, vos saisies sont gardées.",
-        "Sans réseau : téléchargez « Le Championnat » (F1.csv) sur la page France (lien ci-dessous) et fixtures.csv, puis "
+        "Sans réseau : téléchargez le CSV du championnat (F1, D1, E0, I1 ou SP1) sur sa page football-data (lien ci-dessous) et fixtures.csv, puis "
             + "« Importer des CSV… » en les sélectionnant tous (⌘A)."
     ]
 
@@ -323,8 +356,8 @@ struct EtapesCSV: View {
                     Text(etape).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("L'application ne se connecte à internet que pour ces téléchargements, sur football-data.co.uk ; rien "
-                 + "n'est envoyé. Cotes de pari : celles de Winamax, Unibet, Bwin et Betclic si vous les saisissez, sinon "
+            Text("L'application ne se connecte à internet que pour ces téléchargements, sur football-data.co.uk (et "
+                 + "understat.com pour les xG) ; rien n'est envoyé. Cotes de pari : celles de Winamax, Unibet, Bwin et Betclic si vous les saisissez, sinon "
                  + "la cote moyenne en ligne du CSV, indicative. La cote de clôture Pinnacle ne sert qu'au modèle.")
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -358,7 +391,7 @@ struct BoutonImportCSV: View {
                           systemImage: "arrow.down.circle")
                 }
                 .disabled(occupe)
-                .help("Télécharge sur football-data.co.uk fixtures.csv, le F1.csv de la saison en cours et ceux des "
+                .help("Télécharge sur football-data.co.uk fixtures.csv, le CSV de la saison en cours et ceux des "
                       + "saisons passées manquantes, puis les importe.")
                 if vm.telechargementEnCours {
                     ProgressView().controlSize(.small)
@@ -387,7 +420,7 @@ struct BoutonImportCSV: View {
             }
         }
         .onAppear {
-            guard automatique, !vm.miseAJourAutomatiqueFaite, !occupe else { return }
+            guard automatique, !vm.miseAJourAutomatiqueFaite, !occupe, !vm.majGlobaleEnCours else { return }
             vm.miseAJourAutomatiqueFaite = true
             telecharger()
         }
@@ -413,6 +446,7 @@ struct BoutonImportCSV: View {
 
     private var occupe: Bool {
         vm.importEnCours || vm.calibrationEnCours || vm.telechargementEnCours || vm.cotesEnCours
+            || vm.xgEnCours
             || vm.blocageIntegrite != nil
     }
 
@@ -441,10 +475,20 @@ struct BoutonImportCSV: View {
         statut = nil
         vm.importerCSV(i) { erreur in
             if let erreur { statut = ([erreur, i.resume].joined(separator: "\n"), false) }
-            else { statut = ("Import terminé.\n" + i.resume, i.erreurs.isEmpty) }
-            guard enLigne, erreur == nil, vm.cotesEnLigneConfigurees else { return }
-            vm.telechargerCotes { texte, ok in
+            else { statut = (["Import terminé.", vm.noteCalendrier, i.resume].compactMap { $0 }.joined(separator: "\n"),
+                             i.erreurs.isEmpty) }
+            guard enLigne, erreur == nil else { return }
+            func ajouter(_ texte: String, _ ok: Bool) {
                 statut = ([statut?.texte, texte].compactMap { $0 }.joined(separator: "\n"), (statut?.ok ?? true) && ok)
+            }
+            // Cotes (si une clé est enregistrée), puis xG des matchs joués.
+            if vm.cotesEnLigneConfigurees {
+                vm.telechargerCotes { texte, ok in
+                    ajouter(texte, ok)
+                    vm.telechargerXg { ajouter($0, $1) }
+                }
+            } else {
+                vm.telechargerXg { ajouter($0, $1) }
             }
         }
     }
@@ -460,7 +504,7 @@ struct BoutonImportCSV: View {
 
 /// « Ligue 1 » écrit d'un seul trait, à la manière du « hello » du premier
 /// Macintosh, et tracé à l'apparition.
-struct SignatureLigue1: View {
+struct SignaturePredict: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var progression: CGFloat = 0
 
@@ -476,7 +520,7 @@ struct SignatureLigue1: View {
         }
         .aspectRatio(TraitSignature.cadre.width / TraitSignature.cadre.height, contentMode: .fit)
         .accessibilityElement()
-        .accessibilityLabel("Ligue 1")
+        .accessibilityLabel("Predict")
         .onAppear {
             guard progression == 0 else { return }
             if reduceMotion {
@@ -552,7 +596,7 @@ struct RevueIntegriteView: View {
         let r = resultat
 
         VStack(alignment: .leading, spacing: Theme.espaceM) {
-            Label("\(alerte.fichier) a été modifié en dehors de Ligue1",
+            Label("\(alerte.fichier) a été modifié en dehors de Predict",
                   systemImage: "exclamationmark.shield.fill")
                 .font(Theme.titre)
                 .foregroundColor(.orange)

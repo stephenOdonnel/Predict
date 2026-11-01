@@ -1,6 +1,6 @@
 //
 //  StructureViewModel.swift
-//  Ligue1
+//  Predict
 //  © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
 //
 //  Thème et composants d'interface partagés (repris de Finance et MedCompta, accent indigo).

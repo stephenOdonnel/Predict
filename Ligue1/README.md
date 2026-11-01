@@ -1,8 +1,8 @@
-# Ligue1
+# Predict
 
 © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier `LICENSE`).
 
-App macOS de prévision de la Ligue 1 et de simulation de paris. Un modèle
+App macOS de prévision (Ligue 1, Bundesliga, Premier League, Serie A, Liga) et de simulation de paris. Un modèle
 statistique, calibré sur les 10 dernières saisons, estime chaque match,
 simule la fin de saison et propose des paris avec leur précision mesurée.
 
@@ -26,7 +26,7 @@ simule la fin de saison et propose des paris avec leur précision mesurée.
 Les données viennent toutes seules de football-data.co.uk, gratuitement.
 Une clé gratuite The Odds API (Paramètres › Saison) ajoute les cotes
 Winamax, Unibet et Betclic. Pas de mot de passe ; tout reste sur votre Mac,
-dans `Documents/Ligue1`.
+dans `Documents/Predict`.
 
 ## Compiler
 
@@ -37,25 +37,25 @@ Il faut macOS 14 ou plus récent et les outils en ligne de commande d'Apple
 xcode-select --install
 ```
 
-Puis, dans le dossier `Ligue1` :
+Puis, dans le dossier `Predict` :
 
 ```bash
-./build.sh        # crée build/Ligue1.app
+./build.sh        # crée build/Predict.app
 ./build.sh run    # compile puis lance l'app
 ```
 
-## Ajouter Ligue1 à ses applications
+## Ajouter Predict à ses applications
 
 ```bash
-./build.sh install    # compile puis copie Ligue1 dans /Applications
+./build.sh install    # compile puis copie Predict dans /Applications
 ```
 
-Ou glissez `build/Ligue1.app` dans le dossier Applications du Finder.
-Ligue1 apparaît alors dans le Launchpad et dans Spotlight (⌘ Espace,
-« Ligue1 »). Pour la garder dans le Dock : clic droit sur son icône ›
+Ou glissez `build/Predict.app` dans le dossier Applications du Finder.
+Predict apparaît alors dans le Launchpad et dans Spotlight (⌘ Espace,
+« Predict »). Pour la garder dans le Dock : clic droit sur son icône ›
 Options › Garder dans le Dock.
 
-Quittez Ligue1 avant de recompiler : une app déjà ouverte n'est pas
+Quittez Predict avant de recompiler : une app déjà ouverte n'est pas
 remplacée.
 
 Si vous avez reçu l'app déjà compilée, macOS la bloque au premier lancement,
@@ -63,12 +63,12 @@ car elle n'est pas notarisée. Ouvrez Réglages Système › Confidentialité et
 sécurité › **Ouvrir quand même**, ou :
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Ligue1.app
+xattr -dr com.apple.quarantine /Applications/Predict.app
 ```
 
 ## Utilisation
 
-Au premier lancement, Ligue1 télécharge la saison en cours et les 10
+Au premier lancement, Predict télécharge la saison en cours et les 10
 précédentes, puis calibre le modèle (quelques secondes). Ensuite, chaque
 semaine, un clic sur **Mettre à jour en ligne** dans le tableau de bord
 suffit. Mode d'emploi complet : Paramètres (⌘,) › Aide.
@@ -82,5 +82,5 @@ Ne misez que ce que vous pouvez perdre ; aide : Joueurs Info Service,
 Logiciel libre de Stephen O'Donnell et Tanguy Labbe : vous pouvez le
 redistribuer et le modifier selon les termes de la licence publique générale
 GNU, version 3 ou ultérieure. Fourni sans aucune garantie. Texte complet
-dans `LICENSE`. « Ligue 1 » et les écussons des clubs sont des marques de
+dans `LICENSE`. Les noms des championnats et les écussons des clubs sont des marques de
 leurs titulaires respectifs.

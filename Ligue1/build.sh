@@ -1,14 +1,14 @@
 #!/bin/bash
 # © 2026 Stephen O'Donnell, Tanguy Labbe · GNU GPL v3 ou ultérieure (fichier LICENSE).
-# Builds Ligue1.app with the Command Line Tools toolchain (no Xcode required).
-#   ./build.sh          build into ./build/Ligue1.app
+# Builds Predict.app with the Command Line Tools toolchain (no Xcode required).
+#   ./build.sh          build into ./build/Predict.app
 #   ./build.sh run      build, then launch
 #   ./build.sh install  build, then copy to /Applications
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-APP_NAME="Ligue1"
+APP_NAME="Predict"
 DEPLOY_TARGET="14.0"
 ARCHS="arm64 x86_64"    # binaire universel (Apple Silicon + Intel)
 BUILD_DIR="build"
@@ -53,7 +53,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Signature. Une identité stable garde les mêmes autorisations d'une
 # compilation à l'autre ; à défaut, signature ad hoc.
-SIGN_ID="${LIGUE1_SIGN_ID:-Ligue1 Local Signing}"
+SIGN_ID="${PREDICT_SIGN_ID:-Predict Local Signing}"
 if codesign --force --deep --sign "$SIGN_ID" "$APP" 2>/dev/null; then
     echo "Signe avec : $SIGN_ID"
 else
